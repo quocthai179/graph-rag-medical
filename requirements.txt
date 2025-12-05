@@ -4,3 +4,5 @@ pandas
 tqdm
 google-genai
 python-dotenv
+pypdf
+pyarrow

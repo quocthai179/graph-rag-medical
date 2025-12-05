@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Callable, Iterator, List, Sequence
 
 import pandas as pd
-from docx import Document
 from pypdf import PdfReader
 from tqdm import tqdm
 
@@ -96,32 +95,12 @@ def parse_pdf(path: Path) -> Iterator[RawSection]:
         yield RawSection(source=path.stem, filepath=path, section=idx + 1, text=text)
 
 
-def parse_docx(path: Path) -> Iterator[RawSection]:
-    document = Document(path)
-    paragraphs: List[str] = []
-    for paragraph in document.paragraphs:
-        if paragraph.text.strip():
-            paragraphs.append(paragraph.text)
-
-    full_text = "\n".join(paragraphs)
-    if full_text:
-        yield RawSection(source=path.stem, filepath=path, section=1, text=full_text)
-
-
-def parse_txt(path: Path) -> Iterator[RawSection]:
-    text = path.read_text(encoding="utf-8", errors="ignore")
-    if text:
-        yield RawSection(source=path.stem, filepath=path, section=1, text=text)
-
-
 Parser = Callable[[Path], Iterator[RawSection]]
 
 
 def load_raw_documents(raw_dir: Path) -> List[RawSection]:
     parsers: dict[str, Parser] = {
         ".pdf": parse_pdf,
-        ".docx": parse_docx,
-        ".txt": parse_txt,
     }
 
     sections: List[RawSection] = []

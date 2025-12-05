@@ -4,6 +4,5 @@ pandas
 tqdm
 google-genai
 python-dotenv
-python-docx
 pypdf
 pyarrow

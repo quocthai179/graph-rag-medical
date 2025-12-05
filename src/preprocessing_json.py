@@ -177,8 +177,8 @@ def process_folder(input_folder: Path, output_file: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Convert PDF documents to passages JSONL")
-    parser.add_argument("--raw-dir", type=Path, default=Path("data/raw"), help="Directory containing raw data folders")
-    parser.add_argument("--output-dir", type=Path, default=Path("data/processed"), help="Directory to store output JSONL files")
+    parser.add_argument("--raw-dir", type=Path, default=Path("./data/raw"), help="Directory containing raw data folders")
+    parser.add_argument("--output-dir", type=Path, default=Path("./data/pre_json"), help="Directory to store output JSONL files")
     args = parser.parse_args()
 
     if not args.raw_dir.exists():

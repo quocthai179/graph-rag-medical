@@ -1,2 +1,6 @@
 fitz
 PyMuPDF
+pandas
+tqdm
+google-genai
+python-dotenv

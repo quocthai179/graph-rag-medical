@@ -6,6 +6,7 @@ google-genai
 python-dotenv
 pypdf
 pyarrow
+matplotlib
 numpy
 neo4j
 faiss-cpu

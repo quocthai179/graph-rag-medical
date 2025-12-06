@@ -1,8 +1,12 @@
-"""Load graph data into Neo4j from Parquet inputs."""
+"""Load topology CSV outputs into Neo4j."""
+
+from __future__ import annotations
 
 import argparse
 import logging
-from typing import Dict, Iterable, Tuple
+import re
+from pathlib import Path
+from typing import Dict, Iterable, Iterator, Tuple
 
 import pandas as pd
 from neo4j import GraphDatabase
@@ -10,21 +14,30 @@ from neo4j import GraphDatabase
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 
+DEFAULT_TOPOLOGY_DIR = Path("data/topology")
+
 
 def _create_constraints(tx) -> None:
     tx.run("CREATE CONSTRAINT IF NOT EXISTS FOR (n:Entity) REQUIRE n.id IS UNIQUE")
-    tx.run("CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.name)")
+    tx.run("CREATE INDEX IF NOT EXISTS FOR (n:Entity) ON (n.label)")
+
+
+def _sanitize_label(raw: str | None) -> str:
+    if not raw:
+        return "Entity"
+    safe = re.sub(r"[^A-Za-z0-9_]", "", raw)
+    return safe or "Entity"
 
 
 def _merge_node(tx, node_data: Dict) -> None:
     node_id = node_data.get("id")
-    if node_id is None:
+    if not node_id:
         raise ValueError("Node data must contain an 'id' field")
 
-    label = node_data.get("label") or "Entity"
-    properties = {k: v for k, v in node_data.items() if k not in {"id", "label"}}
+    class_label = _sanitize_label(node_data.get("class_label"))
+    properties = {k: v for k, v in node_data.items() if k not in {"id", "class_label"}}
 
-    cypher = f"MERGE (n:Entity {{id: $id}}) SET n:{label} SET n += $props"
+    cypher = f"MERGE (n:Entity {{id: $id}}) SET n:{class_label} SET n += $props"
     tx.run(cypher, id=node_id, props=properties)
 
 
@@ -34,7 +47,7 @@ def _merge_edge(tx, edge_data: Dict) -> None:
     if source_id is None or target_id is None:
         raise ValueError("Edge data must contain 'source_id'/'source' and 'target_id'/'target' fields")
 
-    rel_type = edge_data.get("type") or "RELATED"
+    rel_type = _sanitize_label(edge_data.get("type"))
     properties = {k: v for k, v in edge_data.items() if k not in {"source_id", "source", "target_id", "target", "type"}}
 
     cypher = (
@@ -73,14 +86,51 @@ def load_to_neo4j(nodes: Iterable[Dict], edges: Iterable[Dict], uri: str, auth: 
         driver.close()
 
 
-def _iter_records(df: pd.DataFrame) -> Iterable[Dict]:
+def _iter_records(df: pd.DataFrame) -> Iterator[Dict]:
     return df.to_dict(orient="records")
 
 
+def _load_nodes(nodes_path: Path, provenance_path: Path | None) -> pd.DataFrame:
+    frames = []
+    if nodes_path.exists():
+        frames.append(pd.read_csv(nodes_path))
+    if provenance_path and provenance_path.exists():
+        frames.append(pd.read_csv(provenance_path))
+    if not frames:
+        raise FileNotFoundError("No node CSVs found to import")
+
+    nodes_df = pd.concat(frames, ignore_index=True).fillna("")
+    nodes_df = nodes_df.rename(columns={":ID": "id", ":LABEL": "class_label"})
+    return nodes_df
+
+
+def _load_edges(edges_path: Path) -> pd.DataFrame:
+    if not edges_path.exists():
+        raise FileNotFoundError(f"Edge CSV not found: {edges_path}")
+    edges_df = pd.read_csv(edges_path).fillna("")
+    edges_df = edges_df.rename(
+        columns={":START_ID": "source_id", ":END_ID": "target_id", ":TYPE": "type"}
+    )
+    return edges_df
+
+
 def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Load graph data into Neo4j.")
-    parser.add_argument("--nodes", required=True, help="Path to nodes parquet file")
-    parser.add_argument("--edges", required=True, help="Path to edges parquet file")
+    parser = argparse.ArgumentParser(description="Load topology CSVs into Neo4j.")
+    parser.add_argument(
+        "--nodes",
+        default=str(DEFAULT_TOPOLOGY_DIR / "nodes.csv"),
+        help="Path to nodes CSV exported by topology_detection.py",
+    )
+    parser.add_argument(
+        "--provenance",
+        default=str(DEFAULT_TOPOLOGY_DIR / "provenance.csv"),
+        help="Optional provenance CSV to import as nodes",
+    )
+    parser.add_argument(
+        "--edges",
+        default=str(DEFAULT_TOPOLOGY_DIR / "rels.csv"),
+        help="Path to relationships CSV exported by topology_detection.py",
+    )
     parser.add_argument("--uri", default="neo4j://localhost:7687", help="Neo4j URI")
     parser.add_argument("--user", default="neo4j", help="Neo4j user")
     parser.add_argument("--password", required=True, help="Neo4j password")
@@ -89,11 +139,17 @@ def _parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = _parse_args()
-    logger.info("Loading nodes from %s", args.nodes)
-    logger.info("Loading edges from %s", args.edges)
+    nodes_path = Path(args.nodes)
+    provenance_path = Path(args.provenance) if args.provenance else None
+    edges_path = Path(args.edges)
 
-    nodes_df = pd.read_parquet(args.nodes)
-    edges_df = pd.read_parquet(args.edges)
+    logger.info("Loading nodes from %s", nodes_path)
+    if provenance_path:
+        logger.info("Loading provenance from %s", provenance_path)
+    logger.info("Loading edges from %s", edges_path)
+
+    nodes_df = _load_nodes(nodes_path, provenance_path)
+    edges_df = _load_edges(edges_path)
 
     node_count, rel_count = load_to_neo4j(
         _iter_records(nodes_df), _iter_records(edges_df), args.uri, (args.user, args.password)

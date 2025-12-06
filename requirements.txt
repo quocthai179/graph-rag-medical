@@ -6,4 +6,8 @@ google-genai
 python-dotenv
 pypdf
 pyarrow
+numpy
 neo4j
+faiss-cpu
+qdrant-client
+pytest
